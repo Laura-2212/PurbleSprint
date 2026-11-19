@@ -287,7 +287,7 @@ if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_b
 
             <div class="pipeline">
                 <?php if ($sprintAtiva): ?>
-                    <?php $numeroEtapa = (int)$sprintAtiva['etapa_atual']; $dadosEtapa = dadosEtapaAtual($sprintAtiva); $clientePodeValidar = !empty($_SESSION['usuario']) && $_SESSION['usuario']['perfil'] === 'cliente' && (int)$_SESSION['usuario']['id'] === (int)$sprintAtiva['usuario_id']; ?>
+                    <?php $numeroEtapa = (int)$sprintAtiva['etapa_atual']; $dadosEtapa = dadosEtapaAtual($sprintAtiva); $clientePodeValidar = !empty($_SESSION['usuario']) && ($_SESSION['usuario']['perfil'] === 'admin' || ($_SESSION['usuario']['perfil'] === 'cliente' && (int)$_SESSION['usuario']['id'] === (int)$sprintAtiva['usuario_id'])); ?>
                     <?php if ($numeroEtapa >= 6): ?>
                         <article class="etapa-card concluida"><span class="etapa-num">✓</span><h3>Projeto concluído</h3><p><?=e($sprintAtiva['codigo'])?> foi aprovado e publicado.</p><?php if(!empty($sprintAtiva['preview_url'])): ?><a class="btn btn-zoom" href="<?=e($sprintAtiva['preview_url'])?>" target="_blank" rel="noopener">Abrir projeto</a><?php endif;?></article>
                     <?php else: ?>
@@ -328,6 +328,17 @@ setInterval(() => {
     const seg = String(segundosRestantes % 60).padStart(2, '0');
     document.getElementById('cronometro').textContent = `Fornalha Ativa • ${min}:${seg}`;
 }, 1000);
+</script>
+<script>
+document.addEventListener('submit', function (event) {
+    const form = event.target;
+    const button = event.submitter || form.querySelector('button[type="submit"], button:not([type])');
+    if (!button || form.dataset.submitting === '1') { event.preventDefault(); return; }
+    form.dataset.submitting = '1';
+    button.textContent = 'Enviando…';
+    button.disabled = true;
+    form.querySelectorAll('button[type="submit"], button:not([type])').forEach(item => item.disabled = true);
+});
 </script>
 
 </body>

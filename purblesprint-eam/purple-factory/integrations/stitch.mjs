@@ -44,7 +44,7 @@ const servidor = createServer(async (req, res) => {
     if (projetos.some((item) => item.projectId === idExistente || item.id === idExistente)) {
       projeto = stitch.project(idExistente);
     } else {
-      projeto = await stitch.createProject({ title: `PurpleSprint ${idSeguro}` });
+      projeto = await stitch.createProject(`PurpleSprint ${idSeguro}`);
     }
     const geracao = await projeto.generate(
       `Crie uma tela web desktop responsiva e profissional para este projeto: ${String(receita || 'Aplicação web')}\n\nRequisitos do cliente:\n${ideia.trim()}\n\nUse português do Brasil. Entregue interface completa e acessível.`,

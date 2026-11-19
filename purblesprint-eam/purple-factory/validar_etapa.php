@@ -3,7 +3,7 @@ declare(strict_types=1);
 session_start();
 require_once __DIR__ . '/config.php';
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_SESSION['usuario']) || $_SESSION['usuario']['perfil'] !== 'cliente') {
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_SESSION['usuario']) || !in_array($_SESSION['usuario']['perfil'], ['cliente', 'admin'], true)) {
     http_response_code(403);
     exit('A validação exige uma conta de cliente conectada.');
 }
@@ -15,9 +15,14 @@ if ($tokenSessao === '' || !hash_equals($tokenSessao, (string)($_POST['csrf_toke
 
 $pdo = conectarBanco();
 $codigo = trim((string)($_POST['codigo'] ?? ''));
-$etapaEnviada = filter_input(INPUT_POST, 'etapa', FILTER_VALIDATE_INT);
-$consulta = $pdo->prepare('SELECT etapa_atual FROM sprints WHERE codigo = :codigo AND usuario_id = :usuario');
-$consulta->execute([':codigo' => $codigo, ':usuario' => $_SESSION['usuario']['id']]);
+$etapaEnviada = filter_var($_POST['etapa'] ?? '', FILTER_VALIDATE_INT);
+$ehAdmin = $_SESSION['usuario']['perfil'] === 'admin';
+$consulta = $pdo->prepare($ehAdmin
+    ? 'SELECT etapa_atual FROM sprints WHERE codigo = :codigo'
+    : 'SELECT etapa_atual FROM sprints WHERE codigo = :codigo AND usuario_id = :usuario');
+$parametros = [':codigo' => $codigo];
+if (!$ehAdmin) { $parametros[':usuario'] = $_SESSION['usuario']['id']; }
+$consulta->execute($parametros);
 $sprint = $consulta->fetch();
 if (!$sprint || $etapaEnviada !== (int)$sprint['etapa_atual']) {
     http_response_code(409);
@@ -26,11 +31,17 @@ if (!$sprint || $etapaEnviada !== (int)$sprint['etapa_atual']) {
 
 $proximaEtapa = (int)$sprint['etapa_atual'] + 1;
 if ($proximaEtapa > 5) {
-    $alterar = $pdo->prepare("UPDATE sprints SET etapa_atual = 6, status_aprovacao = 'Publicado em Produção' WHERE codigo = :codigo AND usuario_id = :usuario AND etapa_atual = :etapa");
-    $alterar->execute([':codigo' => $codigo, ':usuario' => $_SESSION['usuario']['id'], ':etapa' => $etapaEnviada]);
+    $sql = "UPDATE sprints SET etapa_atual = 6, status_aprovacao = 'Publicado em Produção' WHERE codigo = :codigo AND etapa_atual = :etapa" . ($ehAdmin ? '' : ' AND usuario_id = :usuario');
+    $alterar = $pdo->prepare($sql);
+    $parametros = [':codigo' => $codigo, ':etapa' => $etapaEnviada];
+    if (!$ehAdmin) { $parametros[':usuario'] = $_SESSION['usuario']['id']; }
+    $alterar->execute($parametros);
 } else {
-    $alterar = $pdo->prepare("UPDATE sprints SET etapa_atual = :proxima, status_aprovacao = 'Em Produção' WHERE codigo = :codigo AND usuario_id = :usuario AND etapa_atual = :etapa");
-    $alterar->execute([':proxima' => $proximaEtapa, ':codigo' => $codigo, ':usuario' => $_SESSION['usuario']['id'], ':etapa' => $etapaEnviada]);
+    $sql = "UPDATE sprints SET etapa_atual = :proxima, status_aprovacao = 'Em Produção' WHERE codigo = :codigo AND etapa_atual = :etapa" . ($ehAdmin ? '' : ' AND usuario_id = :usuario');
+    $alterar = $pdo->prepare($sql);
+    $parametros = [':proxima' => $proximaEtapa, ':codigo' => $codigo, ':etapa' => $etapaEnviada];
+    if (!$ehAdmin) { $parametros[':usuario'] = $_SESSION['usuario']['id']; }
+    $alterar->execute($parametros);
 }
 
 header('Location: cliente.php?validacao=ok');

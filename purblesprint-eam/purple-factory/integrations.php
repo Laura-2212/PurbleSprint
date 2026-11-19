@@ -24,6 +24,9 @@ function executarGeracaoIntegrada(string $codigo, string $ideia, string $receita
             $resultados[$servico] = $dados;
         } else {
             $mensagemErro = is_array($dados) && !empty($dados['erro']) ? $dados['erro'] : ($erroCurl ?: "Serviço indisponível (HTTP {$statusHttp}).");
+            if ($servico === 'antigravity' && preg_match('/429|quota exceeded|limit exceeded|free tier/i', (string)$mensagemErro)) {
+                $mensagemErro = 'Cota gratuita diária do Gemini esgotada. Aguarde a renovação ou habilite faturamento no Google AI Studio.';
+            }
             $resultados[$servico] = ['ok' => false, 'erro' => mb_substr((string)$mensagemErro, 0, 500)];
         }
     }

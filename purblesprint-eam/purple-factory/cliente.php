@@ -5,9 +5,13 @@ require_once __DIR__ . '/config.php';
 $pdo = conectarBanco();
 if (empty($_SESSION['usuario'])) { header('Location: login.php'); exit; }
 if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); }
-$q = $pdo->prepare('SELECT * FROM sprints WHERE usuario_id = :id ORDER BY criado_em DESC');
-$q->execute([':id' => $_SESSION['usuario']['id']]);
-$projetos = $q->fetchAll();
+if ($_SESSION['usuario']['perfil'] === 'admin') {
+    $projetos = $pdo->query('SELECT * FROM sprints ORDER BY criado_em DESC')->fetchAll();
+} else {
+    $q = $pdo->prepare('SELECT * FROM sprints WHERE usuario_id = :id ORDER BY criado_em DESC');
+    $q->execute([':id' => $_SESSION['usuario']['id']]);
+    $projetos = $q->fetchAll();
+}
 ?>
 <!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Meus projetos — PurpleSprint</title><link rel="stylesheet" href="assets/style.css"></head><body>
 <header class="header"><div class="logo-area"><a class="logo-home" href="index.php" aria-label="Voltar para a tela inicial"><span class="logo-icon">PurpleSprint</span></a><span>Olá, <?=e($_SESSION['usuario']['nome'])?></span></div><nav><a class="tag-tech" href="index.php">Nova ideia</a> <a class="tag-tech" href="logout.php">Sair</a></nav></header>
@@ -30,4 +34,4 @@ $projetos = $q->fetchAll();
 <?php endif; ?>
 <div class="links-projeto"><?php if(!empty($p['preview_url'])): ?><a href="<?=e($p['preview_url'])?>" target="_blank" rel="noopener">Preview do projeto</a><?php endif;?><?php if(!empty($p['stitch_preview_path'])): ?> · <a href="<?=e($p['stitch_preview_path'])?>" target="_blank" rel="noopener">Tela do protótipo</a><?php endif;?><?php if($p['modalidade_video']==='agendar'): ?> · Reunião <?=e($p['data_agendada'])?> às <?=e($p['horario_agendado'])?><?php endif;?></div>
 </section>
-<?php endforeach; endif; ?></main></body></html>
+<?php endforeach; endif; ?></main><script>document.addEventListener('submit',function(event){const form=event.target;const button=event.submitter||form.querySelector('button[type="submit"],button:not([type])');if(!button||form.dataset.submitting==='1'){event.preventDefault();return}form.dataset.submitting='1';button.textContent='Enviando…';button.disabled=true;form.querySelectorAll('button[type="submit"],button:not([type])').forEach(item=>item.disabled=true)});</script></body></html>

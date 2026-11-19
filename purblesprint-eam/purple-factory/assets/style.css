@@ -431,6 +431,24 @@ input[type="text"], input[type="email"], input[type="password"], textarea, selec
 .etapa-card.destaque { background: linear-gradient(145deg, #F4E7ED, #FFF8EF); }
 .telemetry-box strong { color: var(--ameixa); }
 .timer-badge { background: #F5E2DE; color: #7A2020; }
+.logo-icon {
+    display: inline-flex;
+    width: 64px;
+    height: 64px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    font-size: 0;
+}
+.logo-icon::before {
+    content: "";
+    display: inline-block;
+    width: 64px;
+    height: 64px;
+    flex: 0 0 64px;
+    background: center / contain no-repeat url("logo-purplesprint.png");
+}
 
 .progresso-etapas { display: grid; gap: .65rem; margin-bottom: 1.2rem; }
 .progresso-etapas > div:first-child { display: flex; justify-content: space-between; align-items: center; gap: .75rem; flex-wrap: wrap; color: var(--texto-suave); font-size: .88rem; }
@@ -453,3 +471,4 @@ input[type="text"], input[type="email"], input[type="password"], textarea, selec
 .card { box-shadow: 0 14px 35px rgba(70,38,72,.10); border-color: rgba(144,55,101,.25); }
 .auth input { background: var(--input-dark) !important; color: var(--texto-principal) !important; }
 .pilula { background: var(--ameixa); color: var(--gelo); }
+button:disabled { cursor: wait; }
