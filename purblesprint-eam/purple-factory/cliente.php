@@ -13,11 +13,11 @@ if ($_SESSION['usuario']['perfil'] === 'admin') {
     $projetos = $q->fetchAll();
 }
 ?>
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Meus projetos — PurpleSprint</title><link rel="stylesheet" href="assets/style.css"></head><body>
-<header class="header"><div class="logo-area"><a class="logo-home" href="index.php" aria-label="Voltar para a tela inicial"><span class="logo-icon">PurpleSprint</span></a><span>Olá, <?=e($_SESSION['usuario']['nome'])?></span></div><nav><a class="tag-tech" href="index.php">Nova ideia</a> <a class="tag-tech" href="logout.php">Sair</a></nav></header>
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Meus projetos — PurpleSprint</title><link rel="icon" type="image/png" href="assets/logo-purplesprint.png"><link rel="stylesheet" href="assets/style.css"></head><body>
+<header class="header"><div class="logo-area"><a class="logo-home" href="index.php" aria-label="Voltar para a página de apresentação"><span class="logo-icon">PurpleSprint</span></a><span>Olá, <?=e($_SESSION['usuario']['nome'])?></span></div><nav><a class="tag-tech" href="app.php">Nova ideia</a> <a class="tag-tech" href="logout.php">Sair</a></nav></header>
 <main class="container"><section class="hero-topo"><h1>Meus projetos</h1><p>Acompanhe uma etapa por vez e valide para avançar.</p></section>
 <?php if (($_GET['validacao'] ?? '') === 'ok'): ?><div class="card aviso-sucesso" role="status">Etapa validada. O projeto avançou para a próxima etapa.</div><?php endif; ?>
-<?php if (!$projetos): ?><section class="card"><p>Seus projetos aparecerão aqui depois que você enviar uma ideia.</p><a class="btn btn-assado" href="index.php">Enviar uma ideia</a></section>
+<?php if (!$projetos): ?><section class="card"><p>Seus projetos aparecerão aqui depois que você enviar uma ideia.</p><a class="btn btn-assado" href="app.php">Enviar uma ideia</a></section>
 <?php else: foreach ($projetos as $p): $numeroEtapa = (int)$p['etapa_atual']; ?>
 <section class="card projeto-cliente"><div class="projeto-cabecalho"><div><span class="codigo-projeto"><?=e($p['codigo'])?></span><h2><?=e($p['receita_tipo'])?></h2></div><span class="tag-tech"><?=e($p['status_aprovacao'])?></span></div>
 <p class="descricao-projeto"><?=e($p['descricao_ideia'])?></p>

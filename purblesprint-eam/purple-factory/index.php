@@ -1,345 +1,148 @@
 <?php
 declare(strict_types=1);
 session_start();
-require_once __DIR__ . '/config.php';
-require_once __DIR__ . '/zoom_api.php';
-require_once __DIR__ . '/integrations.php';
-
-$pdo = conectarBanco();
-$alerta = '';
-$salaZoomGerada = '';
-
-// Processa criação de nova fornada na Esteira PurpleSprint + Sala Zoom
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'iniciar_sprint' && empty($_SESSION['usuario'])) {
-    $alerta = 'Entre ou crie uma conta de cliente antes de enviar sua ideia para acompanhar e validar as etapas.';
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'iniciar_sprint' && !empty($_SESSION['usuario'])) {
-    $cliente    = trim($_POST['cliente_nome'] ?? 'Cliente PurpleSprint');
-    $receita    = $_POST['receita_tipo'] ?? 'App SaaS MVP';
-    $ideia      = trim($_POST['descricao_ideia'] ?? '');
-    $modalidade = $_POST['modalidade_video'] ?? 'agora';
-    $dataAgend  = $modalidade === 'agendar' ? ($_POST['data_agendada'] ?? 'Hoje') : '';
-    $horaAgend  = $modalidade === 'agendar' ? ($_POST['horario_agendado'] ?? '09:30') : '';
-    $idioma     = $_POST['idioma'] ?? 'Português';
-    $libras     = isset($_POST['libras']);
-    $legendas   = isset($_POST['legendas']);
-
-    if ($ideia !== '') {
-        $codigo = '#Sprint-' . rand(100, 999);
-        $slug   = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $codigo));
-        $previewUrl = '';
-
-        // Integração com a API do Zoom
-        $zoomLink = $modalidade === 'sem_chamada' ? '' : criarSalaBriefingZoom($codigo, $modalidade, $dataAgend, $horaAgend, $idioma, $libras, $legendas);
-        $salaZoomGerada = $zoomLink;
-
-        $stmt = $pdo->prepare("
-            INSERT INTO sprints (codigo, cliente_nome, receita_tipo, descricao_ideia, modalidade_video, data_agendada, horario_agendado, idioma, libras, legendas, zoom_link, etapa_atual, validacao_sequencial, status_aprovacao, preview_url, usuario_id)
-            VALUES (:cod, :cli, :rec, :ideia, :mod, :dt, :hr, :idi, :lib, :leg, :zlink, 1, 1, 'Em Produção', :prev, :uid)
-        ");
-        $stmt->execute([
-            ':cod'   => $codigo,
-            ':cli'   => $cliente,
-            ':rec'   => $receita,
-            ':ideia' => $ideia,
-            ':mod'   => $modalidade,
-            ':dt'    => $dataAgend,
-            ':hr'    => $horaAgend,
-            ':idi'   => $idioma,
-            ':lib'   => $libras ? 1 : 0,
-            ':leg'   => $legendas ? 1 : 0,
-            ':zlink' => $zoomLink,
-            ':prev'  => $previewUrl,
-            ':uid'   => $_SESSION['usuario']['id']
-        ]);
-
-        ini_set('max_execution_time', '0');
-        $geracoes = executarGeracaoIntegrada($codigo, $ideia, $receita);
-        $stitch = $geracoes['stitch'];
-        $agente = $geracoes['antigravity'];
-        $upd = $pdo->prepare('UPDATE sprints SET stitch_project_id=:sp, stitch_screen_id=:ss, stitch_preview_path=:sh, stitch_status=:st, antigravity_status=:as, codigo_gerado_path=:cp, preview_url=:prev WHERE codigo=:c');
-        $upd->execute([
-            ':sp' => $stitch['projectId'] ?? null,
-            ':ss' => $stitch['screenId'] ?? null,
-            ':sh' => !empty($stitch['ok']) ? "generated-projects/{$slug}/stitch-preview.html" : null,
-            ':st' => !empty($stitch['ok']) ? 'Design gerado' : 'Pendente: ' . ($stitch['erro'] ?? 'erro desconhecido'),
-            ':as' => !empty($agente['ok']) ? 'Código gerado' : 'Pendente: ' . ($agente['erro'] ?? 'erro desconhecido'),
-            ':cp' => $agente['path'] ?? null,
-            ':prev' => !empty($agente['ok']) ? "generated-projects/{$slug}/index.php" : '',
-            ':c' => $codigo,
-        ]);
-        $alerta = $modalidade === 'sem_chamada' ? "Ideia {$codigo} enviada sem chamada." : "Fornada {$codigo} enviada com briefing Zoom.";
-        $alerta .= ' Stitch: ' . (!empty($stitch['ok']) ? 'protótipo gerado' : 'pendente') . '; Antigravity: ' . (!empty($agente['ok']) ? 'código gerado' : 'pendente') . '.';
-    }
-}
-
-if (!empty($_SESSION['usuario']) && $_SESSION['usuario']['perfil'] === 'admin') {
-    $sprintAtiva = $pdo->query('SELECT * FROM sprints ORDER BY criado_em DESC LIMIT 1')->fetch();
-} elseif (!empty($_SESSION['usuario'])) {
-    $consulta = $pdo->prepare('SELECT * FROM sprints WHERE usuario_id = :id ORDER BY criado_em DESC LIMIT 1');
-    $consulta->execute([':id' => $_SESSION['usuario']['id']]);
-    $sprintAtiva = $consulta->fetch();
-} else {
-    $sprintAtiva = false;
-}
-if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); }
+$usuario = $_SESSION['usuario'] ?? null;
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PurpleSprint — Confeitaria de Software em 30 Minutos</title>
-    <link rel="stylesheet" href="assets/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PurpleSprint — Apresentação do Projeto</title>
+  <link rel="icon" type="image/png" href="assets/logo-purplesprint.png">
+  <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
 
 <header class="header">
-    <div class="logo-area">
-        <a class="logo-home" href="index.php" aria-label="Voltar para o início"><span class="logo-icon">PurpleSprint</span></a>
-        <div>
-            <strong>30 MIN EXPRESS</strong><br>
-            <small style="color: var(--texto-suave);">Sua ideia, construída etapa por etapa</small>
-        </div>
+  <div class="logo-area">
+    <a class="logo-home" href="index.php" aria-label="Página de apresentação">
+      <span class="logo-icon">PurpleSprint</span>
+    </a>
+    <div>
+      <strong>PurpleSprint EAM</strong><br>
+      <small style="color: var(--texto-suave);">Fábrica de Software &amp; Esteira Inteligente</small>
     </div>
-
-    <div class="timer-badge" id="cronometro">Fornalha Ativa • 24:13</div>
-
-    <nav class="top-nav" aria-label="Conta">
-        <?php if (!empty($_SESSION['usuario'])): ?>
-            <a class="nav-link" href="cliente.php">Meus projetos</a>
-            <?php if ($_SESSION['usuario']['perfil'] === 'admin'): ?><a class="nav-link" href="admin.php">Área ADM</a><?php endif; ?>
-            <a class="nav-button" href="logout.php">Sair</a>
-        <?php else: ?>
-            <a class="nav-link" href="cliente.php">Meus projetos</a>
-            <a class="nav-button" href="login.php">Entrar na conta</a>
-        <?php endif; ?>
-    </nav>
+  </div>
+  <nav class="top-nav" aria-label="Navegação">
+    <a class="nav-link" href="#sobre">Sobre</a>
+    <a class="nav-link" href="#como-funciona">Como funciona</a>
+    <?php if ($usuario): ?>
+      <a class="nav-link" href="cliente.php">Meus projetos</a>
+      <a class="nav-button" href="app.php">Enviar ideia</a>
+      <?php if (($usuario['perfil'] ?? '') === 'admin'): ?><a class="nav-link" href="admin.php">Área ADM</a><?php endif; ?>
+      <a class="nav-link" href="logout.php">Sair</a>
+    <?php else: ?>
+      <a class="nav-link" href="login.php">Entrar</a>
+      <a class="nav-button" href="cadastro.php">Inscreva-se</a>
+    <?php endif; ?>
+  </nav>
 </header>
 
 <main class="container">
 
-    <section class="hero-topo">
-        <h1>Mande sua ideia. Receba seu software pronto <span>em até 30 minutos.</span></h1>
-        <p style="color: var(--texto-suave); max-width: 760px; margin: 0 auto;">
-            Envie sua ideia e acompanhe a construção do projeto. Você valida cada etapa antes de avançarmos.
-        </p>
-    </section>
-
-    <?php if ($alerta !== ''): ?>
-        <div class="card" style="border-color: var(--petroleo); background: rgba(24, 80, 106, 0.28); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
-            <div>
-                <strong>Esteira Atualizada:</strong> <?= e($alerta) ?>
-            </div>
-            <?php if ($salaZoomGerada !== ''): ?>
-                <a href="<?= e($salaZoomGerada) ?>" target="_blank" rel="noopener" class="btn btn-zoom">
-                    Abrir Sala Zoom Agora
-                </a>
-            <?php endif; ?>
-        </div>
-    <?php endif; ?>
-
-    <div class="grid-workstation">
-
-        <!-- COLUNA ESQUERDA: RECEITA BASE + BRIEFING ZOOM COM CALENDÁRIO & ACESSIBILIDADE -->
-        <div>
-            <form method="POST" action="index.php" class="card">
-                <input type="hidden" name="acao" value="iniciar_sprint">
-
-                <div class="card-header">
-                    <h2 class="card-titulo">Selecione a Receita Base</h2>
-                </div>
-
-                <div class="chips-grid">
-                    <label class="chip-radio">
-                        <input type="radio" name="receita_tipo" value="Landing Page">
-                        <span>Landing Page</span>
-                    </label>
-                    <label class="chip-radio">
-                        <input type="radio" name="receita_tipo" value="E-commerce Express">
-                        <span>E-commerce</span>
-                    </label>
-                    <label class="chip-radio">
-                        <input type="radio" name="receita_tipo" value="App SaaS MVP" checked>
-                        <span>App SaaS MVP</span>
-                    </label>
-                    <label class="chip-radio">
-                        <input type="radio" name="receita_tipo" value="Automação & API">
-                        <span>Automação</span>
-                    </label>
-                </div>
-
-                <div class="campo">
-                    <label for="cliente_nome">Seu Nome ou Projeto</label>
-                    <input type="text" id="cliente_nome" name="cliente_nome" placeholder="Ex: Doceria Gourmet & Gestão de Pedidos" required>
-                </div>
-
-                <div class="campo">
-                    <label for="descricao_ideia">Ingredientes da Ideia (Escopo Rápido)</label>
-                    <textarea id="descricao_ideia" name="descricao_ideia" rows="2" placeholder="Descreva as funcionalidades principais do seu software..." required></textarea>
-                </div>
-
-                <!-- MÓDULO DE CHAMADA DE VÍDEO ZOOM & ACESSIBILIDADE (STITCH) -->
-                <div class="zoom-panel">
-                    <div class="card-header" style="margin-bottom: 0.6rem;">
-                        <strong>Briefing por Chamada de Vídeo (Zoom 1-a-1)</strong>
-                    </div>
-
-                    <div class="modo-toggle">
-                        <label class="chip-radio">
-                            <input type="radio" name="modalidade_video" value="sem_chamada" onclick="alternarBriefing(false)">
-                            <span>Enviar ideia sem chamada</span>
-                        </label>
-                        <label class="chip-radio">
-                            <input type="radio" name="modalidade_video" value="agora" checked onclick="alternarBriefing(true); alternarCalendario(false)">
-                            <span>Chamada Imediata (Agora)</span>
-                        </label>
-                        <label class="chip-radio">
-                            <input type="radio" name="modalidade_video" value="agendar" onclick="alternarBriefing(true); alternarCalendario(true)">
-                            <span>Agendar no Calendário</span>
-                        </label>
-                    </div>
-
-                    <div id="opcoes-briefing">
-                    <!-- Mini-Calendário Interativo -->
-                    <div id="box-calendario" class="calendario-box" style="display: none;">
-                        <label style="font-size: 0.8rem; color: var(--texto-suave); display:block; margin-bottom:0.4rem;">
-                            Selecione a Data (Brasília GMT-3):
-                        </label>
-                        <div class="chips-grid" style="margin-bottom: 0.75rem;">
-                            <label class="chip-radio"><input type="radio" name="data_agendada" value="Hoje" checked><span>Hoje</span></label>
-                            <label class="chip-radio"><input type="radio" name="data_agendada" value="Amanhã"><span>Amanhã</span></label>
-                            <label class="chip-radio"><input type="radio" name="data_agendada" value="Seg"><span>Seg</span></label>
-                            <label class="chip-radio"><input type="radio" name="data_agendada" value="Ter"><span>Ter</span></label>
-                        </div>
-
-                        <label style="font-size: 0.8rem; color: var(--texto-suave); display:block; margin-bottom:0.4rem;">
-                            Horários com Arquitetos Disponíveis (30 min):
-                        </label>
-                        <div class="chips-grid" style="margin-bottom: 0;">
-                            <label class="chip-radio"><input type="radio" name="horario_agendado" value="09:30" checked><span>09:30</span></label>
-                            <label class="chip-radio"><input type="radio" name="horario_agendado" value="11:00"><span>11:00</span></label>
-                            <label class="chip-radio"><input type="radio" name="horario_agendado" value="14:30"><span>14:30</span></label>
-                            <label class="chip-radio"><input type="radio" name="horario_agendado" value="16:00"><span>16:00</span></label>
-                        </div>
-                    </div>
-
-                    <div class="campo" style="margin-bottom: 0.5rem;">
-                        <label>Idioma de Preferência para o Briefing:</label>
-                        <div class="chips-grid" style="margin-bottom: 0;">
-                            <label class="chip-radio"><input type="radio" name="idioma" value="Português" checked><span>Português</span></label>
-                            <label class="chip-radio"><input type="radio" name="idioma" value="English"><span>English</span></label>
-                            <label class="chip-radio"><input type="radio" name="idioma" value="Español"><span>Español</span></label>
-                            <label class="chip-radio"><input type="radio" name="idioma" value="Libras"><span>Libras</span></label>
-                        </div>
-                    </div>
-
-                    <label style="font-size: 0.8rem; color: var(--texto-suave); display:block; margin-top: 0.65rem;">
-                        Recursos de Acessibilidade & Inclusão (Gratuito):
-                    </label>
-                    <div class="acess-list">
-                        <label class="acess-item">
-                            <input type="checkbox" name="libras" value="1" checked>
-                            <span>Intérprete de Libras</span>
-                        </label>
-                        <label class="acess-item">
-                            <input type="checkbox" name="legendas" value="1" checked>
-                            <span>Legendas ao Vivo IA</span>
-                        </label>
-                    </div>
-                    </div>
-                </div>
-
-                <button type="submit" class="btn btn-assado">Enviar minha ideia</button>
-            </form>
-
-            <!-- Telemetria da Fornada -->
-            <div class="telemetry-row">
-                <div class="telemetry-box">
-                    <strong>3.420+</strong>
-                    <small style="color: var(--texto-suave);">Softwares Assados</small>
-                </div>
-                <div class="telemetry-box">
-                    <strong>100%</strong>
-                    <small style="color: var(--texto-suave);">Aprovação QA</small>
-                </div>
-                <div class="telemetry-box" style="border-color: var(--carmesim);">
-                    <strong style="color: #ff9999;">30:00m</strong>
-                    <small style="color: var(--texto-suave);">Garantia Quente</small>
-                </div>
-            </div>
-        </div>
-
-        <!-- COLUNA DIREITA: ESTEIRA PURBLESPRINT EM TEMPO REAL -->
-        <section class="card">
-            <div class="card-header">
-                <div>
-                    <h2 class="card-titulo">
-                        <?= $sprintAtiva ? 'Etapa atual · ' . e($sprintAtiva['codigo']) : 'Acompanhe sua ideia' ?>
-                    </h2>
-                    <small style="color: var(--texto-suave);">
-                        Orquestração Antigravity + Prototipação Stitch + Zoom 1-a-1
-                    </small>
-                </div>
-                <span class="timer-badge">SLA 30:00m MAX</span>
-            </div>
-
-            <div class="pipeline">
-                <?php if ($sprintAtiva): ?>
-                    <?php $numeroEtapa = (int)$sprintAtiva['etapa_atual']; $dadosEtapa = dadosEtapaAtual($sprintAtiva); $clientePodeValidar = !empty($_SESSION['usuario']) && ($_SESSION['usuario']['perfil'] === 'admin' || ($_SESSION['usuario']['perfil'] === 'cliente' && (int)$_SESSION['usuario']['id'] === (int)$sprintAtiva['usuario_id'])); ?>
-                    <?php if ($numeroEtapa >= 6): ?>
-                        <article class="etapa-card concluida"><span class="etapa-num">✓</span><h3>Projeto concluído</h3><p><?=e($sprintAtiva['codigo'])?> foi aprovado e publicado.</p><?php if(!empty($sprintAtiva['preview_url'])): ?><a class="btn btn-zoom" href="<?=e($sprintAtiva['preview_url'])?>" target="_blank" rel="noopener">Abrir projeto</a><?php endif;?></article>
-                    <?php else: ?>
-                        <div class="progresso-etapas"><div><strong>Etapa <?=$numeroEtapa?> de 5</strong><span><?=e($sprintAtiva['status_aprovacao'])?></span></div><div class="barra-progresso"><span style="width: <?=($numeroEtapa * 20)?>%"></span></div></div>
-                        <article class="etapa-card etapa-atual"><span class="etapa-num"><?=sprintf('%02d',$numeroEtapa)?></span><h3><?=e($dadosEtapa['titulo'])?></h3><p><?=e($dadosEtapa['descricao'])?></p>
-                        <?php if($numeroEtapa===1): ?><p><strong>Cliente:</strong> <?=e($sprintAtiva['cliente_nome'])?> · <strong>Ideia:</strong> <?=e($sprintAtiva['descricao_ideia'])?></p><?php if(!empty($sprintAtiva['zoom_link'])): ?><a class="btn btn-zoom" href="<?=e($sprintAtiva['zoom_link'])?>" target="_blank" rel="noopener">Abrir reunião Zoom</a><?php endif;?><?php endif;?>
-                        <?php if($numeroEtapa===2): ?><p>Stitch: <?=e($sprintAtiva['stitch_status'])?></p><?php if(!empty($sprintAtiva['stitch_preview_path'])): ?><a class="btn btn-zoom" href="<?=e($sprintAtiva['stitch_preview_path'])?>" target="_blank" rel="noopener">Ver protótipo</a><?php endif;?><?php endif;?>
-                        <?php if($numeroEtapa===3): ?><p>Antigravity: <?=e($sprintAtiva['antigravity_status'])?></p><?php if(!empty($sprintAtiva['preview_url'])): ?><a class="btn btn-zoom" href="<?=e($sprintAtiva['preview_url'])?>" target="_blank" rel="noopener">Abrir software</a><?php endif;?><?php endif;?>
-                        <?php if($numeroEtapa===4): ?><p>Confirme que o protótipo e o software correspondem à sua ideia antes da aprovação final.</p><?php endif;?>
-                        <?php if($numeroEtapa===5 && !empty($sprintAtiva['preview_url'])): ?><a class="btn btn-zoom" href="<?=e($sprintAtiva['preview_url'])?>" target="_blank" rel="noopener">Revisar versão final</a><?php endif;?>
-                        <?php if($clientePodeValidar): ?><form method="post" action="validar_etapa.php" class="validar-etapa-form"><input type="hidden" name="csrf_token" value="<?=e($_SESSION['csrf_token'])?>"><input type="hidden" name="codigo" value="<?=e($sprintAtiva['codigo'])?>"><input type="hidden" name="etapa" value="<?=$numeroEtapa?>"><button class="btn btn-aprovar" type="submit"><?=$numeroEtapa===5?'Aprovar e concluir projeto':'Validar esta etapa e seguir'?></button></form><?php elseif(empty($_SESSION['usuario'])): ?><p class="aviso-validacao"><a href="login.php">Entre na sua conta</a> para validar esta etapa.</p><?php endif;?>
-                        </article>
-                    <?php endif;?>
-                <?php else: ?>
-                    <div class="etapa-card"><h3>Envie sua ideia para começar</h3><p>Depois do envio, você verá uma etapa por vez e poderá validar o avanço.</p></div>
-                <?php endif;?>
-            </div>
-        </section>
-
+  <!-- Primeira coisa da página: link para se inscrever -->
+  <section class="card signup-top" aria-label="Inscreva-se na plataforma">
+    <div class="signup-inner">
+      <div>
+        <a class="btn btn-assado" style="width:auto;" href="cadastro.php">Inscreva-se agora — criar minha conta gratuita</a>
+      </div>
+      <p>Cadastre-se para enviar suas ideias, acompanhar cada etapa do projeto e validar as entregas. Já tem conta? <a href="login.php"><strong>Entrar</strong></a>.</p>
     </div>
+  </section>
+
+  <section class="card landing-hero" aria-label="Apresentação">
+    <div class="hero-copy">
+      <span class="hero-badge">INTEGRA SENAI 2026 · Fábrica de Software</span>
+      <h1>Transformamos ideias em soluções reais com organização, cuidado e presença humana</h1>
+      <p>O <strong>PurpleSprint EAM</strong> é uma plataforma web que organiza solicitações e projetos em uma esteira inteligente, inspirada na linha de montagem do <em>Purble Place</em>. Cada ideia vira um protocolo, percorre etapas claras, recebe acompanhamento transparente e só avança quando o cliente valida o que foi produzido.</p>
+      <p>Nosso trabalho une tecnologia, método, acessibilidade e atendimento próximo para que pessoas e equipes consigam tirar necessidades do papel e transformá-las em software de forma ágil, rastreável e inclusiva.</p>
+      <div class="hero-actions">
+        <a class="btn btn-assado" style="width:auto;" href="cadastro.php">Quero me inscrever</a>
+        <?php if ($usuario): ?>
+          <a class="btn btn-zoom" href="app.php">Enviar minha ideia</a>
+        <?php else: ?>
+          <a class="btn btn-zoom" href="login.php">Já tenho conta</a>
+        <?php endif; ?>
+      </div>
+    </div>
+    <div class="hero-media">
+      <img class="hero-logo" src="assets/logo-purplesprint.png" alt="Logo do PurpleSprint">
+      <figure class="hero-figure">
+        <img src="assets/hero-ilustracao.svg" alt="Ilustração da esteira PurpleSprint mostrando as etapas da ideia até a entrega">
+      </figure>
+    </div>
+  </section>
+
+  <section class="card text-block" id="sobre">
+    <h2 class="section-title">O que é o PurpleSprint?</h2>
+    <p>O PurpleSprint nasceu no contexto do <strong>INTEGRA SENAI 2026</strong> (Categoria INTEGRA Soluções Industriais) como um projeto de <strong>Fábrica de Software</strong>. A proposta é simples de entender e poderosa na prática: organizar o caminho entre uma necessidade e sua solução digital, como em uma confeitaria de software, onde cada “ingrediente” entra na hora certa e cada estação tem uma função bem definida.</p>
+    <p>Mais do que receber pedidos, nós estruturamos o trabalho. Cada solicitação recebe identificação própria, é acompanhada em etapas, mantém histórico e pode ser validada pelo cliente ao longo do processo. Isso traz clareza para quem pede, organização para quem executa e confiança para todos os envolvidos.</p>
+    <p>Nosso propósito é transformar ideias, demandas e chamados em projetos concretos — com começo, meio e fim — reduzindo ruídos, evitando perdas de informação e colocando as pessoas no centro de cada decisão.</p>
+  </section>
+
+  <section class="card">
+    <h2 class="section-title">Nossa solução na prática</h2>
+    <p class="section-lead">Reunimos em um só lugar o que é essencial para acompanhar uma ideia do início à entrega: cadastro, envio, etapas, validação e comunicação.</p>
+    <div class="feature-grid">
+      <article class="feature"><h3>Inscrição simples</h3><p>Qualquer pessoa interessada pode se inscrever, criar sua conta e começar a participar da plataforma em poucos passos.</p></article>
+      <article class="feature"><h3>Esteira transparente</h3><p>O cliente visualiza o andamento do projeto etapa por etapa, com clareza sobre o que já foi feito e o que vem a seguir.</p></article>
+      <article class="feature"><h3>Validação em cada fase</h3><p>Nada avança sem conferência: você revisa as entregas e autoriza a continuidade, garantindo alinhamento com sua necessidade.</p></article>
+      <article class="feature"><h3>Atendimento humano</h3><p>Quando necessário, oferecemos briefing por chamada de vídeo 1 a 1 para entender melhor o contexto e acolher cada pessoa.</p></article>
+      <article class="feature"><h3>Acessibilidade e inclusão</h3><p>O processo pode contar com intérprete de Libras, legendas ao vivo e escolha de idioma, ampliando o acesso e a compreensão.</p></article>
+      <article class="feature"><h3>Rastreabilidade</h3><p>Cada solicitação possui identificação e registro do percurso, facilitando acompanhamento, comunicação e histórico do trabalho.</p></article>
+    </div>
+  </section>
+
+  <section class="card text-block" id="como-funciona">
+    <h2 class="section-title">Como funciona a esteira do PurpleSprint?</h2>
+    <p>Depois de se inscrever e acessar a plataforma, você envia sua ideia e acompanha um fluxo organizado em etapas. Essa lógica de “uma estação por vez” dá segurança, mantém o foco e permite construir cada avanço sobre uma base já conferida:</p>
+    <div class="steps-grid">
+      <div class="step-item"><div class="step-num">1</div><div><h3>Envio da ideia e briefing</h3><p>Você descreve o que precisa, escolhe o tipo de solução (landing page, e-commerce, app, automação, entre outras possibilidades) e define se prefere enviar sem chamada, falar imediatamente por vídeo ou agendar um horário. Assim, o ponto de partida fica registrado com clareza.</p></div></div>
+      <div class="step-item"><div class="step-num">2</div><div><h3>Revisão do protótipo</h3><p>A equipe prepara uma proposta visual e estrutural para a sua ideia. Você confere a direção do projeto antes que a construção avance, o que reduz retrabalho e alinha expectativas.</p></div></div>
+      <div class="step-item"><div class="step-num">3</div><div><h3>Revisão do software</h3><p>Com o caminho validado, a solução evolui para uma versão funcional. Nessa fase, é possível avaliar comportamento, conteúdo e aderência ao que foi solicitado.</p></div></div>
+      <div class="step-item"><div class="step-num">4</div><div><h3>Validação do cliente</h3><p>Você confirma se o protótipo e o software atendem de fato à necessidade apresentada. Esse momento garante que o resultado faça sentido para quem vai usar.</p></div></div>
+      <div class="step-item"><div class="step-num">5</div><div><h3>Aprovação final e conclusão</h3><p>Após a sua aprovação, o projeto é concluído e publicado dentro do fluxo da plataforma, encerrando o ciclo com registro, visibilidade e entrega organizada.</p></div></div>
+    </div>
+  </section>
+
+  <section class="split">
+    <article class="card text-block">
+      <h2 class="section-title">Presença humana, acessibilidade e inclusão</h2>
+      <p>Acreditamos que tecnologia eficiente deve incluir pessoas. No PurpleSprint, o <strong>Zoom</strong> é utilizado como canal oficial de atendimento 1 a 1 para briefings imediatos ou agendados, sempre que a conversa direta ajuda a entender melhor a necessidade.</p>
+      <p>Durante o atendimento, é possível indicar preferência de idioma (Português, English, Español ou Libras) e contar com recursos como <strong>intérprete de Libras</strong> e <strong>legendas ao vivo com apoio de inteligência artificial</strong>. Essas escolhas tornam o processo mais acolhedor e acessível para diferentes perfis de usuários.</p>
+      <p>Nosso compromisso é manter a presença humana constante: o sistema organiza e acelera, mas são as pessoas que escutam, decidem e validam.</p>
+    </article>
+    <article class="card text-block">
+      <h2 class="section-title">Privacidade, cuidado e confiança</h2>
+      <p>Levamos a sério a responsabilidade sobre as informações compartilhadas na plataforma. Buscamos adotar boas práticas alinhadas aos princípios da <strong>LGPD (Lei Geral de Proteção de Dados)</strong>, evitando exposição desnecessária de dados e utilizando as informações para o acompanhamento e a execução das solicitações.</p>
+      <p>Ao centralizar pedidos em um ambiente próprio, reduzimos a dependência de canais informais e fortalecemos a segurança do histórico, da comunicação e da rastreabilidade.</p>
+      <p>Queremos que cada usuário saiba, com transparência, o que está acontecendo com sua solicitação, em que etapa ela está e como participar das validações.</p>
+    </article>
+  </section>
+
+  <section class="card text-block">
+    <h2 class="section-title">Para quem é o PurpleSprint e como trabalhamos</h2>
+    <p>O PurpleSprint foi pensado para cenários em que organização, rapidez e clareza são fundamentais. Ele pode apoiar <strong>equipes e ambientes industriais</strong> na gestão de chamados e melhorias, <strong>clientes e solicitantes</strong> que desejam tirar ideias do papel, <strong>gestores</strong> que precisam de visão sobre andamento e conclusões, e <strong>pessoas que valorizam acessibilidade</strong> em cada etapa da comunicação.</p>
+    <p>Trabalhamos com mentalidade de <strong>fábrica de software</strong>: processos definidos, colaboração entre etapas, foco em resultado e melhoria contínua. A inspiração no <em>Purble Place</em> traz leveza à experiência, mas nosso compromisso é sério — entregar soluções úteis, compreensíveis e alinhadas ao que cada pessoa realmente precisa.</p>
+    <p>Valorizamos <strong>transparência</strong>, <strong>colaboração</strong>, <strong>inclusão</strong>, <strong>agilidade com responsabilidade</strong> e <strong>qualidade</strong>. É essa combinação que define o jeito PurpleSprint de trabalhar e o cuidado que colocamos em cada projeto.</p>
+  </section>
+
+  <section class="card" style="text-align:center;">
+    <h2 class="section-title">Pronto para começar?</h2>
+    <p class="section-lead">O primeiro passo é se inscrever na plataforma. Depois disso, você poderá enviar sua ideia, escolher a melhor forma de briefing e acompanhar todo o progresso na esteira PurpleSprint.</p>
+    <div class="hero-actions" style="justify-content:center;">
+      <a class="btn btn-assado" style="width:auto;" href="cadastro.php">Inscreva-se agora</a>
+      <?php if ($usuario): ?>
+        <a class="btn btn-zoom" href="app.php">Enviar minha ideia</a>
+      <?php else: ?>
+        <a class="btn btn-zoom" href="login.php">Entrar na conta</a>
+      <?php endif; ?>
+    </div>
+  </section>
+
 </main>
 
-<script>
-function alternarBriefing(mostrar) {
-    document.getElementById('opcoes-briefing').style.display = mostrar ? 'block' : 'none';
-}
-
-function alternarCalendario(mostrar) {
-    document.getElementById('box-calendario').style.display = mostrar ? 'block' : 'none';
-}
-
-// Simulação de contagem regressiva ativa na esteira (24:13)
-let segundosRestantes = 24 * 60 + 13;
-setInterval(() => {
-    if (segundosRestantes <= 0) return;
-    segundosRestantes--;
-    const min = String(Math.floor(segundosRestantes / 60)).padStart(2, '0');
-    const seg = String(segundosRestantes % 60).padStart(2, '0');
-    document.getElementById('cronometro').textContent = `Fornalha Ativa • ${min}:${seg}`;
-}, 1000);
-</script>
-<script>
-document.addEventListener('submit', function (event) {
-    const form = event.target;
-    const button = event.submitter || form.querySelector('button[type="submit"], button:not([type])');
-    if (!button || form.dataset.submitting === '1') { event.preventDefault(); return; }
-    form.dataset.submitting = '1';
-    button.textContent = 'Enviando…';
-    button.disabled = true;
-    form.querySelectorAll('button[type="submit"], button:not([type])').forEach(item => item.disabled = true);
-});
-</script>
-
+<script src="https://cdn.jsdelivr.net/npm/sienna-accessibility/dist/sienna-accessibility.umd.js" async></script>
 </body>
 </html>
